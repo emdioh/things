@@ -142,6 +142,7 @@ def read_epub(path: str | Path) -> Book:
         chapters=chapters,
         cover=cover,
         cover_mime=cover_mime,
+        identifier=_meta(book, "identifier"),
     )
 
 

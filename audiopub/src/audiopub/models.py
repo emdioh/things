@@ -25,6 +25,7 @@ class Book:
     chapters: list[Chapter]
     cover: bytes | None = None
     cover_mime: str | None = None
+    identifier: str = ""
 
 
 @dataclass

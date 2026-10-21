@@ -12,7 +12,7 @@ from .env import load_env, user_env_file
 from .epub import read_epub
 from .llm import DEFAULT_LLM, PROVIDERS
 from .models import NARRATOR
-from .pipeline import Project, slug
+from .pipeline import Project, default_root, project_dir
 from .tts import BACKENDS, make_tts
 
 
@@ -37,8 +37,9 @@ def _add_book_args(p: argparse.ArgumentParser, multi: bool = False) -> None:
     else:
         p.add_argument("epub", type=Path, help="EPUB file")
     p.add_argument("--chapters", help="chapters to process, e.g. '1-3,7' (default: all; see 'audiopub chapters')")
-    p.add_argument("--workdir", type=Path, default=Path("audiopub-work"),
-                   help="cache directory for scripts, cast and audio (default: ./audiopub-work)")
+    p.add_argument("--workdir", type=Path,
+                   help="where projects (analysis, cast, audio) are stored "
+                        f"(default: $AUDIOPUB_HOME or {default_root()})")
 
 
 def _add_llm_args(p: argparse.ArgumentParser) -> None:
@@ -89,7 +90,7 @@ def _tts(args):
 
 def _open(epub: Path, args):
     book = read_epub(epub)
-    project = Project(book, args.workdir / slug(epub.stem))
+    project = Project(book, project_dir(book, args.workdir), epub)
     chapters = [book.chapters[i] for i in parse_selection(args.chapters, len(book.chapters))]
     return book, project, chapters
 
@@ -146,13 +147,58 @@ def _cast_and_render(args, project: Project, chapters, scripts, render: bool) ->
 
 
 def _cached_scripts(project: Project, chapters):
-    scripts = {}
-    for c in chapters:
-        segs = project.load_script(c)
-        if segs is None:
-            return None
-        scripts[c.index] = segs
+    scripts = project.load_scripts(chapters)
+    missing = [c.index + 1 for c in chapters if c.index not in scripts]
+    if missing:
+        listed = ", ".join(map(str, missing[:10])) + (" ..." if len(missing) > 10 else "")
+        raise SystemExit(f"chapters not analyzed yet: {listed}. Run 'audiopub analyze' first "
+                         "(it resumes where it stopped), or limit with --chapters.")
     return scripts
+
+
+def cmd_status(args) -> None:
+    book, project, chapters = _open(args.epub, args)
+    tts_name, ext = args.tts, {"edge": "mp3", "kokoro": "wav", "openai": "mp3"}[args.tts]
+    rows = project.status(chapters, tts_name, ext, fmt=args.format, announce_titles=not args.no_titles)
+    print(f"{book.title} — {book.author}\nproject: {project.dir}\n")
+    print(f"{'#':>4}  {'chapter':<40} {'analysis':<26} {'audio (' + tts_name + ')':<16} encoded")
+    for r in rows:
+        if r.analysis == "done":
+            analysis = f"done ({r.attributor})"
+        elif r.analysis == "partial":
+            analysis = f"partial {r.paragraphs_done}/{len(r.chapter.paragraphs)} par."
+        else:
+            analysis = "-"
+        lines = f"{r.lines_rendered}/{r.lines_total}" if r.lines_total else "-"
+        print(f"{r.chapter.index + 1:>4}  {r.chapter.title[:40]:<40} {analysis[:26]:<26} {lines:<16} "
+              f"{'yes' if r.encoded else '-'}")
+    done = sum(r.analysis == "done" for r in rows)
+    print(f"\n{done}/{len(rows)} chapters analyzed", end="")
+    if not project.cast_path_for(tts_name).exists():
+        print(f"; no cast for '{tts_name}' yet (run 'audiopub cast')", end="")
+    print()
+    if args.speakers:
+        scripts = project.load_scripts(chapters)
+        lines = Counter(s.speaker for segs in scripts.values() for s in segs)
+        roster = project.load_roster()
+        print(f"\n{'speaker':<30} {'lines':>5}  details")
+        for speaker, n in lines.most_common():
+            char = roster.characters.get(speaker)
+            details = ""
+            if char:
+                details = f"{char.gender}, {char.age}"
+                if char.aliases:
+                    details += f"; aka {', '.join(char.aliases)}"
+                if char.description:
+                    details += f"; {char.description}"
+            print(f"{speaker[:30]:<30} {n:>5}  {details}")
+
+
+def cmd_speaker(args) -> None:
+    book, project, _ = _open(args.epub, args)
+    changed = project.rename_speaker(args.old, args.new)
+    print(f"{changed} line(s) reassigned from {args.old!r} to {args.new!r}. "
+          "Run 'audiopub render' to update the audio (only affected lines are re-synthesized).")
 
 
 def cmd_cast(args) -> None:
@@ -213,6 +259,20 @@ def main(argv: list[str] | None = None) -> None:
     _add_tts_args(p)
     _add_output_args(p)
     p.set_defaults(func=cmd_render)
+
+    p = sub.add_parser("status", help="show what's been analyzed and rendered (and where it's stored)")
+    _add_book_args(p)
+    p.add_argument("--tts", choices=BACKENDS, default="edge", help="backend whose audio progress to show")
+    p.add_argument("--format", choices=["m4b", "mp3"], default="m4b")
+    p.add_argument("--no-titles", action="store_true")
+    p.add_argument("--speakers", action="store_true", help="also list all speakers and their line counts")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("speaker", help="rename a speaker, or merge one into another, across the book")
+    _add_book_args(p)
+    p.add_argument("old", help="current speaker name (or alias)")
+    p.add_argument("new", help="new name, or an existing character to merge into (NARRATOR for non-speech)")
+    p.set_defaults(func=cmd_speaker)
 
     p = sub.add_parser("voices", help="list the voices a TTS backend offers for a language")
     p.add_argument("--lang", default="en", help="language code, e.g. en, it, fr (default: en)")

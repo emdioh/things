@@ -1,8 +1,19 @@
-"""Orchestration: analyze (who says what) and render (TTS + assembly), with on-disk caching.
+"""Orchestration in resumable steps: analyze -> cast -> render.
 
-Everything is cached under the work directory, so an interrupted run resumes
-where it stopped and a re-run after editing ``cast.<backend>.json`` only
-re-renders what changed.
+Each book gets a project directory (by default under ~/.local/share/audiopub,
+keyed by the book's identity, so it is found again from any folder and after
+renaming the file):
+
+    book.json            what this project is
+    characters.json      the character roster built during analysis
+    script/chNNN.json    who says what, per chapter (hand-editable)
+    script/chNNN.partial.json   checkpoint of a chapter being analyzed
+    cast.<backend>.json  voice per speaker (hand-editable)
+    audio/               one file per synthesized line, keyed by content
+    chapters/            encoded chapters, keyed by content
+
+Every step only does work whose result is missing, so interrupting and
+re-running a command resumes it, and edits only redo what they affect.
 """
 
 from __future__ import annotations
@@ -10,14 +21,16 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import audio
 from .casting import build_cast, load_cast, save_cast
-from .models import NARRATOR, Book, Chapter, Roster, Segment
+from .models import NARRATOR, Book, Chapter, Character, Roster, Segment
 from .tts import TTSBackend
 from .tts.base import Job
 
@@ -37,13 +50,77 @@ def _hash(*parts) -> str:
     return hashlib.sha1(json.dumps(parts, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
+def write_json(path: Path, data, indent: int | None = 1) -> None:
+    """Write atomically, so an interrupted run never leaves a truncated file."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=indent, ensure_ascii=False) + "\n")
+    tmp.replace(path)
+
+
+def default_root() -> Path:
+    if os.environ.get("AUDIOPUB_HOME"):
+        return Path(os.environ["AUDIOPUB_HOME"])
+    base = os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
+    return Path(base) / "audiopub"
+
+
+def project_dir(book: Book, root: Path | None = None) -> Path:
+    key = _hash(book.identifier or "", book.title, book.author)[:8]
+    return (root or default_root()) / "books" / f"{slug(book.title)[:60]}-{key}"
+
+
+class Checkpoint:
+    """Progress through one chapter's analysis: labels so far, paragraphs done."""
+
+    def __init__(self, path: Path, source: str, roster: Roster, save_roster):
+        self.path = path
+        self.source = source
+        self.roster = roster
+        self._save_roster = save_roster
+        self.labels: dict[tuple[int, int], str] = {}
+        self.done = 0
+        if path.exists():
+            data = json.loads(path.read_text())
+            if data.get("source") == source:
+                self.labels = {(p, s): who for p, s, who in data["labels"]}
+                self.done = data["done"]
+
+    def save(self, labels: dict[tuple[int, int], str], done: int) -> None:
+        self.labels, self.done = dict(labels), done
+        self._save_roster(self.roster)
+        write_json(self.path, {
+            "source": self.source,
+            "done": done,
+            "labels": [[p, s, who] for (p, s), who in sorted(labels.items())],
+        }, indent=None)
+
+    def clear(self) -> None:
+        self.path.unlink(missing_ok=True)
+
+
+@dataclass
+class ChapterStatus:
+    chapter: Chapter
+    analysis: str  # "done" | "partial" | "-"
+    attributor: str = ""
+    paragraphs_done: int = 0
+    lines_total: int = 0
+    lines_rendered: int = 0
+    encoded: bool = False
+
+
 class Project:
-    def __init__(self, book: Book, workdir: Path):
+    def __init__(self, book: Book, workdir: Path, epub_path: Path | None = None):
         self.book = book
         self.dir = workdir
         for sub in ("script", "audio", "chapters"):
             (workdir / sub).mkdir(parents=True, exist_ok=True)
         self.roster_path = workdir / "characters.json"
+        manifest = {"title": book.title, "author": book.author, "language": book.language,
+                    "identifier": book.identifier, "epub": str(epub_path.resolve()) if epub_path else None}
+        manifest_path = workdir / "book.json"
+        if not manifest_path.exists() or json.loads(manifest_path.read_text()) != manifest:
+            write_json(manifest_path, manifest, indent=2)
 
     # ---- analysis ---------------------------------------------------------
 
@@ -53,21 +130,35 @@ class Project:
         return Roster()
 
     def save_roster(self, roster: Roster) -> None:
-        self.roster_path.write_text(json.dumps(roster.to_list(), indent=2, ensure_ascii=False) + "\n")
+        write_json(self.roster_path, roster.to_list(), indent=2)
 
     def _script_path(self, chapter: Chapter) -> Path:
         return self.dir / "script" / f"ch{chapter.index:03d}.json"
 
-    def load_script(self, chapter: Chapter) -> list[Segment] | None:
+    def _read_script(self, chapter: Chapter) -> dict | None:
         path = self._script_path(chapter)
         if not path.exists():
             return None
         data = json.loads(path.read_text())
-        if data.get("source") != _hash(chapter.paragraphs):
-            return None
-        return [Segment(**s) for s in data["segments"]]
+        return data if data.get("source") == _hash(chapter.paragraphs) else None
+
+    def load_script(self, chapter: Chapter) -> list[Segment] | None:
+        data = self._read_script(chapter)
+        return [Segment(**s) for s in data["segments"]] if data else None
+
+    def load_scripts(self, chapters: list[Chapter]) -> dict[int, list[Segment]]:
+        """Scripts for the chapters that have been analyzed (others are left out)."""
+        out = {}
+        for c in chapters:
+            segs = self.load_script(c)
+            if segs is not None:
+                out[c.index] = segs
+        return out
 
     def analyze(self, attributor, chapters: list[Chapter], force: bool = False) -> dict[int, list[Segment]]:
+        if force and len(chapters) == len(self.book.chapters):
+            # Re-analyzing the whole book: start the character list from scratch too.
+            self.roster_path.unlink(missing_ok=True)
         roster = self.load_roster()
         scripts: dict[int, list[Segment]] = {}
         for chapter in chapters:
@@ -75,23 +166,80 @@ class Project:
             if cached is not None:
                 scripts[chapter.index] = cached
                 continue
-            _status(f"Analyzing [{chapter.index + 1}/{len(self.book.chapters)}] {chapter.title}")
-            segments = attributor.attribute_chapter(chapter, roster)
+            source = _hash(chapter.paragraphs)
+            checkpoint = Checkpoint(self._script_path(chapter).with_suffix(".partial.json"),
+                                    source, roster, self.save_roster)
+            if force:
+                checkpoint.clear()
+                checkpoint = Checkpoint(checkpoint.path, source, roster, self.save_roster)
+            resumed = f" (resuming at paragraph {checkpoint.done + 1})" if checkpoint.done else ""
+            _status(f"Analyzing [{chapter.index + 1}/{len(self.book.chapters)}] {chapter.title}{resumed}")
+            segments = attributor.attribute_chapter(chapter, roster, checkpoint=checkpoint)
             scripts[chapter.index] = segments
-            self._script_path(chapter).write_text(json.dumps({
+            write_json(self._script_path(chapter), {
                 "title": chapter.title,
                 "attributor": attributor.name,
-                "source": _hash(chapter.paragraphs),
+                "source": source,
                 "segments": [s.to_dict() for s in segments],
-            }, indent=1, ensure_ascii=False))
+            })
             self.save_roster(roster)
+            checkpoint.clear()
         _status("")
         return scripts
+
+    def rename_speaker(self, old: str, new: str) -> int:
+        """Rename a speaker everywhere, merging into ``new`` if it already exists.
+
+        Returns the number of lines changed. Works on saved scripts only; nothing
+        is sent to the LLM again.
+        """
+        roster = self.load_roster()
+        old_name = roster.resolve(old) or old
+        target = roster.resolve(new) or (NARRATOR if new.upper() == NARRATOR else new)
+
+        changed = 0
+        for path in sorted((self.dir / "script").glob("ch???.json")):
+            data = json.loads(path.read_text())
+            hits = [s for s in data["segments"] if s["speaker"] == old_name]
+            for s in hits:
+                s["speaker"] = target
+            if hits:
+                changed += len(hits)
+                write_json(path, data)
+        if not changed and old_name not in roster.characters:
+            raise SystemExit(f"no speaker named {old!r}; see 'audiopub status --speakers'")
+
+        if old_name in roster.characters and old_name != target:
+            gone = roster.characters.pop(old_name)
+            rebuilt = Roster(list(roster.characters.values()))
+            if target != NARRATOR:
+                if target not in rebuilt.characters:  # a plain rename keeps what we knew
+                    rebuilt.upsert(Character(target, gone.gender, gone.age, gone.description))
+                rebuilt.upsert(Character(target, aliases=[old_name, *gone.aliases]))
+                merged = rebuilt.characters[target]
+                merged.gender = merged.gender if merged.gender != "unknown" else gone.gender
+                merged.age = merged.age if merged.age != "unknown" else gone.age
+                merged.description = merged.description or gone.description
+            roster = rebuilt
+        self.save_roster(roster)
+
+        # Drop the old cast entry; the merged speaker keeps (or gets) its own voice.
+        for cast_file in self.dir.glob("cast.*.json"):
+            cast = load_cast(cast_file)
+            if old_name in cast and old_name != target:
+                entry = cast.pop(old_name)
+                if target not in cast and target != NARRATOR:
+                    cast[target] = entry
+                save_cast(cast_file, cast)
+        return changed
 
     # ---- casting ----------------------------------------------------------
 
     def cast_path(self, tts: TTSBackend) -> Path:
-        return self.dir / f"cast.{tts.name}.json"
+        return self.cast_path_for(tts.name)
+
+    def cast_path_for(self, backend: str) -> Path:
+        return self.dir / f"cast.{backend}.json"
 
     def cast(self, tts: TTSBackend, scripts: dict[int, list[Segment]], narrator_voice: str | None = None) -> dict:
         roster = self.load_roster()
@@ -106,6 +254,22 @@ class Project:
 
     # ---- rendering --------------------------------------------------------
 
+    def _plan(self, tts_name: str, ext: str, chapter: Chapter, segments: list[Segment], cast: dict,
+              announce_titles: bool) -> list[tuple[Path, dict, int, str]]:
+        segs = list(segments)
+        if announce_titles:
+            segs.insert(0, Segment(NARRATOR, chapter.title, -1))
+        items = []
+        for seg in segs:
+            voice = cast.get(seg.speaker) or cast[NARRATOR]
+            name = _hash(tts_name, voice["voice"], voice.get("speed", 1.0), seg.text)
+            items.append((self.dir / "audio" / f"{name}.{ext}", voice, seg.paragraph, seg.text))
+        return items
+
+    def _chapter_file(self, chapter: Chapter, items, fmt: str) -> Path:
+        key = _hash(fmt, [(p.name, v.get("pitch", 0.0), para) for p, v, para, _ in items])[:10]
+        return self.dir / "chapters" / f"ch{chapter.index:03d}-{key}.{'m4a' if fmt == 'm4b' else 'mp3'}"
+
     def render(
         self,
         tts: TTSBackend,
@@ -118,42 +282,31 @@ class Project:
         audio.require_ffmpeg()
         out_dir = out_dir or self.dir
         chapters = [c for c in self.book.chapters if c.index in scripts]
+        plan = {c.index: self._plan(tts.name, tts.extension, c, scripts[c.index], cast, announce_titles)
+                for c in chapters}
 
-        # 1. Synthesize every distinct (voice, speed, text) once.
-        plan: dict[int, list[tuple[Path, dict, int]]] = {}
+        # 1. Synthesize every line that has no audio yet.
         jobs: dict[Path, Job] = {}
-        for chapter in chapters:
-            items = []
-            segs = list(scripts[chapter.index])
-            if announce_titles:
-                segs.insert(0, Segment(NARRATOR, chapter.title, -1))
-            for seg in segs:
-                voice = cast.get(seg.speaker) or cast[NARRATOR]
-                path = self.dir / "audio" / f"{_hash(tts.name, voice['voice'], voice.get('speed', 1.0), seg.text)}.{tts.extension}"
+        for items in plan.values():
+            for path, voice, _, text in items:
                 if not path.exists():
-                    jobs[path] = Job(seg.text, voice["voice"], float(voice.get("speed", 1.0)), path)
-                items.append((path, voice, seg.paragraph))
-            plan[chapter.index] = items
-
+                    jobs[path] = Job(text, voice["voice"], float(voice.get("speed", 1.0)), path)
         if jobs:
             done = [0]
 
             def tick():
                 done[0] += 1
                 if sys.stderr.isatty() or done[0] % 100 == 0 or done[0] == len(jobs):
-                        _status(f"Synthesizing speech {done[0]}/{len(jobs)}")
+                    _status(f"Synthesizing speech {done[0]}/{len(jobs)}")
 
             tts.render_many(list(jobs.values()), progress=tick)
             _status("")
 
-        # 2. Encode each chapter (cached by content).
-        ext = "m4a" if fmt == "m4b" else "mp3"
+        # 2. Encode each chapter that changed.
         encoded: list[tuple[str, Path, float]] = []
         for chapter in chapters:
             items = plan[chapter.index]
-            key = _hash(fmt, [(p.name, v.get("pitch", 0.0), para) for p, v, para in items])[:10]
-            name = f"ch{chapter.index:03d}-{key}.{ext}"
-            target = self.dir / "chapters" / name
+            target = self._chapter_file(chapter, items, fmt)
             meta = target.with_suffix(".json")
             if target.exists() and meta.exists():
                 encoded.append((chapter.title, target, json.loads(meta.read_text())["seconds"]))
@@ -161,7 +314,7 @@ class Project:
             _status(f"Encoding [{chapter.index + 1}] {chapter.title}")
             enc = audio.ChapterEncoder(target, fmt)
             prev_para = None
-            for path, voice, para in items:
+            for path, voice, para, _ in items:
                 if prev_para is not None:
                     if prev_para == -1:
                         enc.write(audio.silence(PAUSE_AFTER_TITLE))
@@ -171,7 +324,7 @@ class Project:
                 prev_para = para
             enc.write(audio.silence(PAUSE_END_OF_CHAPTER))
             seconds = enc.close()
-            meta.write_text(json.dumps({"seconds": seconds}))
+            write_json(meta, {"seconds": seconds})
             encoded.append((chapter.title, target, seconds))
         _status("")
 
@@ -189,6 +342,33 @@ class Project:
         for n, (title, path, _) in enumerate(encoded, 1):
             (folder / f"{n:03d} - {slug(title)}.mp3").write_bytes(path.read_bytes())
         return folder
+
+    # ---- status -----------------------------------------------------------
+
+    def status(self, chapters: list[Chapter], tts_name: str | None = None, ext: str | None = None,
+               fmt: str = "m4b", announce_titles: bool = True) -> list[ChapterStatus]:
+        cast = load_cast(self.cast_path_for(tts_name)) if tts_name else {}
+        out = []
+        for chapter in chapters:
+            data = self._read_script(chapter)
+            if data is None:
+                st = ChapterStatus(chapter, "-")
+                partial = self._script_path(chapter).with_suffix(".partial.json")
+                if partial.exists():
+                    cp = json.loads(partial.read_text())
+                    if cp.get("source") == _hash(chapter.paragraphs):
+                        st = ChapterStatus(chapter, "partial", paragraphs_done=cp["done"])
+                out.append(st)
+                continue
+            st = ChapterStatus(chapter, "done", attributor=data.get("attributor", ""))
+            segments = [Segment(**s) for s in data["segments"]]
+            if cast and all(s.speaker in cast for s in segments) and NARRATOR in cast:
+                items = self._plan(tts_name, ext, chapter, segments, cast, announce_titles)
+                st.lines_total = len(items)
+                st.lines_rendered = sum(p.exists() for p, *_ in items)
+                st.encoded = self._chapter_file(chapter, items, fmt).exists()
+            out.append(st)
+        return out
 
 
 def _status(msg: str) -> None:

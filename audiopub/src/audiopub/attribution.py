@@ -56,7 +56,7 @@ class HeuristicAttributor:
 
     name = "heuristic"
 
-    def attribute_chapter(self, chapter: Chapter, roster: Roster) -> list[Segment]:
+    def attribute_chapter(self, chapter: Chapter, roster: Roster, checkpoint=None) -> list[Segment]:
         spans = chapter_spans(chapter)
         return _segments(spans, self.label(spans, roster))
 
@@ -157,10 +157,14 @@ class LLMAttributor:
         self.context_paragraphs = context_paragraphs
         self.fallback = HeuristicAttributor()
 
-    def attribute_chapter(self, chapter: Chapter, roster: Roster) -> list[Segment]:
+    def attribute_chapter(self, chapter: Chapter, roster: Roster, checkpoint=None) -> list[Segment]:
+        """Label a chapter chunk by chunk; ``checkpoint`` (if given) lets an interrupted chapter resume."""
         spans = chapter_spans(chapter)
-        labels: dict[tuple[int, int], str] = {}
+        labels: dict[tuple[int, int], str] = dict(checkpoint.labels) if checkpoint else {}
+        done = checkpoint.done if checkpoint else 0
         for start, end in self._chunks(chapter.paragraphs, spans):
+            if end <= done:
+                continue
             ids: dict[int, tuple[int, int]] = {}
             body = self._render(spans, start, end, ids)
             if not ids:
@@ -180,6 +184,8 @@ class LLMAttributor:
                 if got:
                     log.info("%d dialogue span(s) left unlabelled; using heuristics", len(missing))
                 labels = self.fallback.label(spans, roster, only=missing, given=labels)
+            if checkpoint:
+                checkpoint.save(labels, end)
         return _segments(spans, labels)
 
     def _chunks(self, paragraphs: list[str], spans: list[list[Span]]):
