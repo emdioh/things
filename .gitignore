@@ -3,3 +3,5 @@ __pycache__/
 .pytest_cache/
 audiopub-work/
 *.m4b
+.venv/
+dist/

@@ -19,13 +19,22 @@ book.epub ─▶ chapters & paragraphs ─▶ narration / dialogue split ─▶ 
 
 ## Install
 
-Requires Python 3.10+ and [ffmpeg](https://ffmpeg.org).
+Requires [uv](https://docs.astral.sh/uv/) and [ffmpeg](https://ffmpeg.org). uv fetches a suitable
+Python by itself.
+
+Install the `audiopub` command globally (run from this folder):
 
 ```bash
-cd audiopub
-pip install -e .                 # Anthropic + Edge TTS
-pip install -e '.[openai]'       # + OpenAI-compatible LLMs (OpenAI, Ollama, OpenRouter, Gemini, ...) and OpenAI TTS
-pip install -e '.[kokoro]'       # + Kokoro offline TTS
+uv tool install .                     # Anthropic + Edge TTS
+uv tool install '.[openai]'           # + OpenAI-compatible LLMs (OpenAI, Ollama, OpenRouter, Gemini, ...) and OpenAI TTS
+uv tool install '.[openai,kokoro]'    # + Kokoro offline TTS
+```
+
+Re-run with `--force` after pulling changes. Or skip installing and run it from the project:
+
+```bash
+uv run audiopub convert my-book.epub
+uv run --extra kokoro audiopub convert my-book.epub --tts kokoro
 ```
 
 ## Quick start
@@ -104,8 +113,8 @@ The book's language comes from the EPUB metadata.
 ## Development
 
 ```bash
-pip install -e '.[dev,openai]'
-pytest
+uv sync          # creates .venv with the dev group (pytest, openai)
+uv run pytest
 ```
 
 Tests run the full pipeline offline with a fake LLM and a fake TTS backend.
