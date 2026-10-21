@@ -61,9 +61,11 @@ def _add_llm_args(p: argparse.ArgumentParser) -> None:
 def _add_tts_args(p: argparse.ArgumentParser) -> None:
     g = p.add_argument_group("speech")
     g.add_argument("--tts", choices=BACKENDS, default="edge", help="text-to-speech backend (default: edge)")
-    g.add_argument("--tts-model", help="model for the openai backend (default: gpt-4o-mini-tts)")
+    g.add_argument("--tts-model", help="speech model for the openai/openrouter backends "
+                                       "(defaults: gpt-4o-mini-tts, mistralai/voxtral-mini-tts-3-0)")
     g.add_argument("--tts-base-url", help="URL of an OpenAI-compatible speech server")
-    g.add_argument("--tts-api-key", help="API key for the openai backend")
+    g.add_argument("--tts-api-key", help="API key for the openai/openrouter backends "
+                                         "(default: OPENAI_API_KEY / OPENROUTER_API_KEY)")
     g.add_argument("--narrator-voice", help="voice id for the narrator (see 'audiopub voices')")
     g.add_argument("--multilingual-voices", action="store_true",
                    help="when casting, also use other languages' multilingual voices (more variety, "
@@ -124,8 +126,26 @@ def cmd_chapters(args) -> None:
 
 def cmd_voices(args) -> None:
     tts = _tts(args)
-    for v in tts.voices(args.lang):
+    voices = tts.voices(args.lang)
+    for v in voices:
         print(f"{v.id:<40} {v.gender:<8} {v.locale}")
+    if not args.sample:
+        return
+    from .tts.base import Job
+
+    out = args.sample_dir or Path("voice-samples") / tts.name
+    out.mkdir(parents=True, exist_ok=True)
+    jobs = [Job(args.sample, v.id, 1.0, out / f"{v.id}.{tts.extension}") for v in voices
+            if not (out / f"{v.id}.{tts.extension}").exists()]
+    print(f"\nRecording {len(jobs)} sample(s) of {len(args.sample)} characters into {out}/ ...")
+    for job in jobs:
+        try:
+            tts.render_many([job])
+            print(f"  ✓ {job.out.name}")
+        except Exception as e:  # noqa: BLE001 - report it and go on with the other voices
+            print(f"  ✗ {job.voice}: {e}")
+    print(f"Done. Listen to the files and label the voices you want in AUDIOPUB_TTS_VOICES "
+          f"(e.g. AUDIOPUB_TTS_VOICES=voice_3150:male:{args.lang}-{args.lang.upper()},...).")
 
 
 def cmd_analyze(args) -> None:
@@ -177,7 +197,7 @@ def _warn_failed(project: Project, chapters) -> None:
 
 def cmd_status(args) -> None:
     book, project, chapters = _open(args.epub, args)
-    tts_name, ext = args.tts, {"edge": "mp3", "kokoro": "wav", "openai": "mp3"}[args.tts]
+    tts_name, ext = args.tts, {"edge": "mp3", "kokoro": "wav", "openai": "mp3", "openrouter": "mp3"}[args.tts]
     rows = project.status(chapters, tts_name, ext, fmt=args.format, announce_titles=not args.no_titles)
     print(f"{book.title} — {book.author}\nproject: {project.dir}\n")
     print(f"{'#':>4}  {'chapter':<40} {'analysis':<26} {'audio (' + tts_name + ')':<16} encoded")
@@ -308,6 +328,8 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("voices", help="list the voices a TTS backend offers for a language")
     p.add_argument("--lang", default="en", help="language code, e.g. en, it, fr (default: en)")
+    p.add_argument("--sample", metavar="TEXT", help="record TEXT with every voice, to listen and compare")
+    p.add_argument("--sample-dir", type=Path, help="where to save the samples (default: ./voice-samples/<backend>)")
     _add_tts_args(p)
     p.set_defaults(func=cmd_voices)
 

@@ -198,9 +198,35 @@ overhead), so a 100k-word novel is roughly 150k input tokens.
 |---|---|
 | `edge` (default) | Microsoft Edge neural voices: free, needs internet, ~400 voices in ~80 languages, plus multilingual voices from other languages (opt-in with `--multilingual-voices`; they have a foreign accent). |
 | `kokoro` | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), runs on your machine. ~50 voices (English, Spanish, French, Italian, Portuguese, Hindi, Japanese, Chinese). |
-| `openai` | OpenAI speech (`--tts-model gpt-4o-mini-tts` by default), or any server with the same API via `--tts-base-url` (e.g. Kokoro-FastAPI). For servers with other voices set `AUDIOPUB_TTS_VOICES="id:female,id2:male,..."`. |
+| `openai` | OpenAI speech (`--tts-model gpt-4o-mini-tts` by default), or any server with the same API via `--tts-base-url` (e.g. Kokoro-FastAPI). For servers with other voices set `AUDIOPUB_TTS_VOICES="id:gender[:locale],..."` (see below). |
+| `openrouter` | Speech models on OpenRouter, default `mistralai/voxtral-mini-tts-3-0` (Mistral Voxtral TTS: English, French, Spanish, Portuguese, Italian, Dutch, German, Hindi, Arabic; about $14 per million characters, roughly $1–3 for a novel). Uses `OPENROUTER_API_KEY`. Pick another model with `--tts-model`, e.g. `mistralai/voxtral-mini-tts-2603`. OpenRouter's API has no speed option, so speed changes are applied with ffmpeg afterwards. |
 
 The book's language comes from the EPUB metadata.
+
+### Finding and labelling voices
+
+`audiopub voices --tts openrouter --lang it` lists the voices a backend offers for a language.
+Voxtral's named voices are English and French (`en_paul_neutral`, `gb_oliver_neutral`,
+`gb_jane_neutral`, `fr_marie_neutral`); the numbered `voice_NNNN` ones are undocumented, so their
+language and gender are unknown. Record a sample with every voice and listen to them:
+
+```bash
+audiopub voices --tts openrouter --lang it --sample "Buongiorno, mi chiamo Giacosa e questa è la mia voce."
+```
+
+Samples are saved to `./voice-samples/openrouter/` (use `--sample-dir` to change this). Existing
+files are not re-recorded. It costs a few cents.
+
+Then label the voices you like in `.env` (the ids below are only examples):
+
+```bash
+AUDIOPUB_TTS_VOICES=voice_3150:male:it-IT,voice_478:female:it-IT,en_paul_neutral:male:en-US
+```
+
+Each entry is `id:gender[:locale]`: gender is `male` or `female`, and the locale is like `it-IT`.
+Voices labelled with the book's language are preferred for casting. When `AUDIOPUB_TTS_VOICES` is
+set, this list replaces the backend's built-in voice list. This works for `--tts openai` too, e.g.
+with self-hosted servers.
 
 ## Output
 
