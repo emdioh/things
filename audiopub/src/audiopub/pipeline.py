@@ -69,8 +69,22 @@ def project_dir(book: Book, root: Path | None = None) -> Path:
     return (root or default_root()) / "books" / f"{slug(book.title)[:60]}-{key}"
 
 
+def _labels_to_json(labels: dict[tuple[int, int], str]) -> list:
+    return [[p, s, who] for (p, s), who in sorted(labels.items())]
+
+
+def _labels_from_json(data: list) -> dict[tuple[int, int], str]:
+    return {(p, s): who for p, s, who in data}
+
+
 class Checkpoint:
-    """Progress through one chapter's analysis: labels so far, paragraphs done."""
+    """Progress through one chapter's analysis.
+
+    ``labels`` maps (paragraph, span) -> speaker, ``done`` counts the paragraphs
+    processed, ``failed`` lists (start, end) paragraph ranges where the LLM gave
+    no usable answer and heuristics were used, and ``retry`` (when set) asks the
+    attributor to re-run just those ranges.
+    """
 
     def __init__(self, path: Path, source: str, roster: Roster, save_roster):
         self.path = path
@@ -79,19 +93,26 @@ class Checkpoint:
         self._save_roster = save_roster
         self.labels: dict[tuple[int, int], str] = {}
         self.done = 0
+        self.failed: list[tuple[int, int]] = []
+        self.retry: list[tuple[int, int]] | None = None
         if path.exists():
             data = json.loads(path.read_text())
             if data.get("source") == source:
-                self.labels = {(p, s): who for p, s, who in data["labels"]}
+                self.labels = _labels_from_json(data["labels"])
                 self.done = data["done"]
+                self.failed = [tuple(c) for c in data.get("failed", [])]
 
-    def save(self, labels: dict[tuple[int, int], str], done: int) -> None:
+    def save(self, labels: dict[tuple[int, int], str], done: int,
+             failed: list[tuple[int, int]] | None = None) -> None:
         self.labels, self.done = dict(labels), done
+        if failed is not None:
+            self.failed = list(failed)
         self._save_roster(self.roster)
         write_json(self.path, {
             "source": self.source,
             "done": done,
-            "labels": [[p, s, who] for (p, s), who in sorted(labels.items())],
+            "failed": [list(c) for c in self.failed],
+            "labels": _labels_to_json(labels),
         }, indent=None)
 
     def clear(self) -> None:
@@ -104,6 +125,7 @@ class ChapterStatus:
     analysis: str  # "done" | "partial" | "-"
     attributor: str = ""
     paragraphs_done: int = 0
+    failed_chunks: int = 0
     lines_total: int = 0
     lines_rendered: int = 0
     encoded: bool = False
@@ -155,31 +177,47 @@ class Project:
                 out[c.index] = segs
         return out
 
-    def analyze(self, attributor, chapters: list[Chapter], force: bool = False) -> dict[int, list[Segment]]:
+    def failed_chunks(self, chapter: Chapter) -> list[tuple[int, int]]:
+        data = self._read_script(chapter)
+        return [tuple(c) for c in data.get("failed_chunks", [])] if data else []
+
+    def analyze(self, attributor, chapters: list[Chapter], force: bool = False,
+                retry_failed: bool = False) -> dict[int, list[Segment]]:
         if force and len(chapters) == len(self.book.chapters):
             # Re-analyzing the whole book: start the character list from scratch too.
             self.roster_path.unlink(missing_ok=True)
         roster = self.load_roster()
         scripts: dict[int, list[Segment]] = {}
         for chapter in chapters:
-            cached = None if force else self.load_script(chapter)
-            if cached is not None:
-                scripts[chapter.index] = cached
-                continue
             source = _hash(chapter.paragraphs)
             checkpoint = Checkpoint(self._script_path(chapter).with_suffix(".partial.json"),
                                     source, roster, self.save_roster)
-            if force:
-                checkpoint.clear()
-                checkpoint = Checkpoint(checkpoint.path, source, roster, self.save_roster)
-            resumed = f" (resuming at paragraph {checkpoint.done + 1})" if checkpoint.done else ""
-            _status(f"Analyzing [{chapter.index + 1}/{len(self.book.chapters)}] {chapter.title}{resumed}")
+            cached = None if force else self._read_script(chapter)
+            if cached is not None:
+                retry = [tuple(c) for c in cached.get("failed_chunks", [])]
+                if not (retry_failed and retry and "labels" in cached):
+                    scripts[chapter.index] = [Segment(**s) for s in cached["segments"]]
+                    continue
+                # Re-run only the passages that fell back to heuristics last time.
+                checkpoint.labels = _labels_from_json(cached["labels"])
+                checkpoint.done = len(chapter.paragraphs)
+                checkpoint.failed = retry
+                checkpoint.retry = retry
+                note = f" (retrying {len(retry)} failed passage{'s' if len(retry) > 1 else ''})"
+            else:
+                if force:
+                    checkpoint.clear()
+                    checkpoint = Checkpoint(checkpoint.path, source, roster, self.save_roster)
+                note = f" (resuming at paragraph {checkpoint.done + 1})" if checkpoint.done else ""
+            _status(f"Analyzing [{chapter.index + 1}/{len(self.book.chapters)}] {chapter.title}{note}")
             segments = attributor.attribute_chapter(chapter, roster, checkpoint=checkpoint)
             scripts[chapter.index] = segments
             write_json(self._script_path(chapter), {
                 "title": chapter.title,
                 "attributor": attributor.name,
                 "source": source,
+                "failed_chunks": [list(c) for c in checkpoint.failed],
+                "labels": _labels_to_json(checkpoint.labels),
                 "segments": [s.to_dict() for s in segments],
             })
             self.save_roster(roster)
@@ -203,6 +241,9 @@ class Project:
             hits = [s for s in data["segments"] if s["speaker"] == old_name]
             for s in hits:
                 s["speaker"] = target
+            for label in data.get("labels", []):  # keep them in sync for --retry-failed
+                if label[2] == old_name:
+                    label[2] = target
             if hits:
                 changed += len(hits)
                 write_json(path, data)
@@ -360,7 +401,8 @@ class Project:
                         st = ChapterStatus(chapter, "partial", paragraphs_done=cp["done"])
                 out.append(st)
                 continue
-            st = ChapterStatus(chapter, "done", attributor=data.get("attributor", ""))
+            st = ChapterStatus(chapter, "done", attributor=data.get("attributor", ""),
+                               failed_chunks=len(data.get("failed_chunks", [])))
             segments = [Segment(**s) for s in data["segments"]]
             if cast and all(s.speaker in cast for s in segments) and NARRATOR in cast:
                 items = self._plan(tts_name, ext, chapter, segments, cast, announce_titles)

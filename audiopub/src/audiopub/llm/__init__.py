@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 
-from .base import LLMClient, LLMError
+from .base import LLMClient, LLMError, LLMRefusal
 
 DEFAULT_LLM = "anthropic:claude-opus-5-5"
 
@@ -70,4 +70,4 @@ def make_llm(
     )
 
 
-__all__ = ["DEFAULT_LLM", "LLMClient", "LLMError", "PROVIDERS", "make_llm", "parse_spec"]
+__all__ = ["DEFAULT_LLM", "LLMClient", "LLMError", "LLMRefusal", "PROVIDERS", "make_llm", "parse_spec"]

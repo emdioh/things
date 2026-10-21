@@ -53,6 +53,8 @@ def _add_llm_args(p: argparse.ArgumentParser) -> None:
                    help="reasoning effort, for models that support it")
     g.add_argument("--no-llm", action="store_true", help="use simple built-in heuristics instead of an LLM")
     g.add_argument("--reanalyze", action="store_true", help="ignore cached speaker attribution")
+    g.add_argument("--retry-failed", action="store_true",
+                   help="re-run only the passages where the LLM failed and heuristics were used")
 
 
 def _add_tts_args(p: argparse.ArgumentParser) -> None:
@@ -125,7 +127,7 @@ def cmd_voices(args) -> None:
 def cmd_analyze(args) -> None:
     attributor = _attributor(args)
     book, project, chapters = _open(args.epub, args)
-    scripts = project.analyze(attributor, chapters, force=args.reanalyze)
+    scripts = project.analyze(attributor, chapters, force=args.reanalyze, retry_failed=args.retry_failed)
     lines = Counter(s.speaker for segs in scripts.values() for s in segs)
     roster = project.load_roster()
     print(f"\n{len(roster.characters)} characters found. Most frequent speakers:")
@@ -134,6 +136,7 @@ def cmd_analyze(args) -> None:
         desc = f"{char.gender}, {char.age}: {char.description}" if char else ""
         print(f"  {speaker[:30]:<30} {n:>5}  {desc}")
     print(f"\nScripts and characters saved in {project.dir}")
+    _warn_failed(project, chapters)
 
 
 def _cast_and_render(args, project: Project, chapters, scripts, render: bool) -> None:
@@ -156,6 +159,16 @@ def _cached_scripts(project: Project, chapters):
     return scripts
 
 
+def _warn_failed(project: Project, chapters) -> None:
+    failed = {c.index + 1: project.failed_chunks(c) for c in chapters}
+    failed = {n: ranges for n, ranges in failed.items() if ranges}
+    if failed:
+        where = "; ".join(f"chapter {n}: paragraphs " + ", ".join(f"{a + 1}-{b}" for a, b in ranges)
+                          for n, ranges in failed.items())
+        print(f"\nThe LLM failed on some passages and heuristics were used instead ({where}).\n"
+              "Re-run with --retry-failed to try those passages again.")
+
+
 def cmd_status(args) -> None:
     book, project, chapters = _open(args.epub, args)
     tts_name, ext = args.tts, {"edge": "mp3", "kokoro": "wav", "openai": "mp3"}[args.tts]
@@ -165,6 +178,8 @@ def cmd_status(args) -> None:
     for r in rows:
         if r.analysis == "done":
             analysis = f"done ({r.attributor})"
+            if r.failed_chunks:
+                analysis = f"done, {r.failed_chunks} failed passage{'s' if r.failed_chunks > 1 else ''}"
         elif r.analysis == "partial":
             analysis = f"partial {r.paragraphs_done}/{len(r.chapter.paragraphs)} par."
         else:
@@ -173,6 +188,8 @@ def cmd_status(args) -> None:
         print(f"{r.chapter.index + 1:>4}  {r.chapter.title[:40]:<40} {analysis[:26]:<26} {lines:<16} "
               f"{'yes' if r.encoded else '-'}")
     done = sum(r.analysis == "done" for r in rows)
+    if any(r.failed_chunks for r in rows):
+        print("\nSome passages fell back to heuristics; 'audiopub analyze --retry-failed' re-runs just those.")
     print(f"\n{done}/{len(rows)} chapters analyzed", end="")
     cast_file = project.cast_path_for(tts_name)
     if cast_file.exists():
@@ -225,7 +242,8 @@ def cmd_convert(args) -> None:
     for epub in args.epubs:
         print(f"== {epub}")
         book, project, chapters = _open(epub, args)
-        scripts = project.analyze(attributor, chapters, force=args.reanalyze)
+        scripts = project.analyze(attributor, chapters, force=args.reanalyze, retry_failed=args.retry_failed)
+        _warn_failed(project, chapters)
         _cast_and_render(args, project, chapters, scripts, render=True)
 
 

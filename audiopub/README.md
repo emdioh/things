@@ -157,9 +157,12 @@ The `script/chNNN.json` files can also be edited by hand.
 | `openai:<model> --llm-base-url URL` | any other OpenAI-compatible server (vLLM, llama.cpp, ...) |
 | `--no-llm` | built-in heuristics ("…," said Anna): free and offline, but much less accurate |
 
-`--effort low|medium|high|...` sets reasoning effort on models that support it. If a request
-fails or is declined, that part of the chapter falls back to the heuristics and the run continues.
-Use `--reanalyze` to redo attribution with a different model.
+`--effort low|medium|high|...` sets reasoning effort on models that support it. A reply that
+isn't usable (e.g. malformed JSON, common with providers that lack strict JSON schemas) is retried
+up to 3 times. If the model still fails, or declines, that passage falls back to the heuristics, the
+run continues, and the passage is recorded: `analyze` and `status` list it, and
+`audiopub analyze --retry-failed` sends just those passages to the model again (you can also switch
+`--llm` for the retry). Use `--reanalyze` to redo attribution with a different model.
 
 Cost guide: the whole book passes through the model once (≈1.3 tokens per word plus small
 overhead), so a 100k-word novel is roughly 150k input tokens.

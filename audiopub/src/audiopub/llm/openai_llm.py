@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from .base import LLMError, parse_json_loose
+from .base import LLMError, LLMRefusal, parse_json_loose
 
 
 class OpenAICompatibleLLM:
@@ -57,5 +57,5 @@ class OpenAICompatibleLLM:
         if choice.finish_reason == "length":
             raise LLMError("response was truncated (length)")
         if getattr(choice.message, "refusal", None):
-            raise LLMError(f"model declined: {choice.message.refusal}")
+            raise LLMRefusal(f"model declined: {choice.message.refusal}")
         return parse_json_loose(choice.message.content or "")

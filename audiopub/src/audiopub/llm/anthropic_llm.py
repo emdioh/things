@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import anthropic
 
-from .base import LLMError, parse_json_loose
+from .base import LLMError, LLMRefusal, parse_json_loose
 
 
 class AnthropicLLM:
@@ -33,7 +33,7 @@ class AnthropicLLM:
             response = stream.get_final_message()
 
         if response.stop_reason == "refusal":
-            raise LLMError("model declined the request")
+            raise LLMRefusal("model declined the request")
         if response.stop_reason == "max_tokens":
             raise LLMError("response was truncated (max_tokens)")
         text = "".join(b.text for b in response.content if b.type == "text")

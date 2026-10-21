@@ -14,7 +14,7 @@ import logging
 import re
 
 from .dialogue import split_paragraph
-from .llm import LLMClient, LLMError
+from .llm import LLMClient, LLMError, LLMRefusal
 from .models import AGES, GENDERS, NARRATOR, Chapter, Character, Roster, Segment, Span
 
 log = logging.getLogger(__name__)
@@ -150,21 +150,32 @@ SCHEMA = {
 
 
 class LLMAttributor:
-    def __init__(self, llm: LLMClient, chunk_chars: int = 12000, context_paragraphs: int = 6):
+    def __init__(self, llm: LLMClient, chunk_chars: int = 12000, context_paragraphs: int = 6, attempts: int = 3):
         self.llm = llm
+        self.attempts = attempts
         self.name = llm.name
         self.chunk_chars = chunk_chars
         self.context_paragraphs = context_paragraphs
         self.fallback = HeuristicAttributor()
 
     def attribute_chapter(self, chapter: Chapter, roster: Roster, checkpoint=None) -> list[Segment]:
-        """Label a chapter chunk by chunk; ``checkpoint`` (if given) lets an interrupted chapter resume."""
+        """Label a chapter chunk by chunk.
+
+        ``checkpoint`` (if given) lets an interrupted chapter resume, records the
+        chunks that fell back to heuristics, and - when its ``retry`` list is set -
+        re-runs just those chunks on top of previously saved labels.
+        """
         spans = chapter_spans(chapter)
         labels: dict[tuple[int, int], str] = dict(checkpoint.labels) if checkpoint else {}
         done = checkpoint.done if checkpoint else 0
-        for start, end in self._chunks(chapter.paragraphs, spans):
-            if end <= done:
+        failed: list[tuple[int, int]] = list(checkpoint.failed) if checkpoint else []
+        retry = checkpoint.retry if checkpoint else None
+        chunks = retry if retry else self._chunks(chapter.paragraphs, spans)
+        for start, end in chunks:
+            if not retry and end <= done:
                 continue
+            if retry:
+                failed = [c for c in failed if c != (start, end)]
             ids: dict[int, tuple[int, int]] = {}
             body = self._render(spans, start, end, ids)
             if not ids:
@@ -172,11 +183,9 @@ class LLMAttributor:
             ctx_start = max(0, start - self.context_paragraphs)
             context = self._render(spans, ctx_start, start, None, labels)
             prompt = self._prompt(chapter, roster, context, body)
-            try:
-                result = self.llm.complete_json(SYSTEM_PROMPT, prompt, SCHEMA)
-                got = self._apply(result, ids, roster)
-            except LLMError as e:
-                log.warning("%s: chunk %d-%d of %r failed (%s); using heuristics", self.name, start, end, chapter.title, e)
+            got = self._ask(prompt, ids, roster, f"paragraphs {start + 1}-{end} of {chapter.title!r}")
+            if got is None:
+                failed.append((start, end))
                 got = {}
             labels.update(got)
             missing = set(ids.values()) - set(got)
@@ -185,8 +194,26 @@ class LLMAttributor:
                     log.info("%d dialogue span(s) left unlabelled; using heuristics", len(missing))
                 labels = self.fallback.label(spans, roster, only=missing, given=labels)
             if checkpoint:
-                checkpoint.save(labels, end)
+                checkpoint.save(labels, max(done, end), failed)
+        if checkpoint:
+            checkpoint.failed = failed
         return _segments(spans, labels)
+
+    def _ask(self, prompt: str, ids: dict, roster: Roster, where: str) -> dict | None:
+        """Query the model, retrying unusable replies; None if every attempt failed."""
+        for attempt in range(1, self.attempts + 1):
+            try:
+                return self._apply(self.llm.complete_json(SYSTEM_PROMPT, prompt, SCHEMA), ids, roster)
+            except LLMRefusal as e:
+                log.warning("%s: %s: %s; using heuristics", self.name, where, e)
+                return None
+            except LLMError as e:
+                if attempt < self.attempts:
+                    log.info("%s: %s: %s; retrying (%d/%d)", self.name, where, e, attempt + 1, self.attempts)
+                else:
+                    log.warning("%s: %s failed %d times (%s); using heuristics for this passage "
+                                "(retry later with 'analyze --retry-failed')", self.name, where, self.attempts, e)
+        return None
 
     def _chunks(self, paragraphs: list[str], spans: list[list[Span]]):
         start, size = 0, 0

@@ -6,7 +6,11 @@ from typing import Protocol
 
 
 class LLMError(RuntimeError):
-    """The model could not produce a usable answer (refusal, truncation, bad JSON)."""
+    """The model could not produce a usable answer (truncation, bad JSON). Worth retrying."""
+
+
+class LLMRefusal(LLMError):
+    """The model declined the request. Retrying the same request won't help."""
 
 
 class LLMClient(Protocol):
@@ -23,13 +27,10 @@ def parse_json_loose(text: str) -> dict:
     fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
     if fence:
         text = fence.group(1).strip()
+    start, end = text.find("{"), text.rfind("}")
+    candidate = text[start : end + 1] if 0 <= start < end else text
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        start, end = text.find("{"), text.rfind("}")
-        if start >= 0 and end > start:
-            try:
-                return json.loads(text[start : end + 1])
-            except json.JSONDecodeError:
-                pass
-    raise LLMError(f"model did not return valid JSON: {text[:200]!r}")
+        return json.loads(candidate)
+    except json.JSONDecodeError as e:
+        near = candidate[max(0, e.pos - 60) : e.pos + 20]
+        raise LLMError(f"model returned invalid JSON ({e.msg} at char {e.pos}, near {near!r})") from None
