@@ -65,6 +65,9 @@ def _add_tts_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--tts-base-url", help="URL of an OpenAI-compatible speech server")
     g.add_argument("--tts-api-key", help="API key for the openai backend")
     g.add_argument("--narrator-voice", help="voice id for the narrator (see 'audiopub voices')")
+    g.add_argument("--multilingual-voices", action="store_true",
+                   help="when casting, also use other languages' multilingual voices (more variety, "
+                        "but they speak the book's language with a foreign accent)")
     g.add_argument("--concurrency", type=int, default=4, help="parallel TTS requests (default: 4)")
 
 
@@ -143,7 +146,8 @@ def cmd_analyze(args) -> None:
 
 def _cast_and_render(args, project: Project, chapters, scripts, render: bool) -> None:
     tts = _tts(args)
-    cast = project.cast(tts, scripts, args.narrator_voice)
+    cast = project.cast(tts, scripts, args.narrator_voice, reset=getattr(args, "reset", False),
+                        multilingual=args.multilingual_voices)
     _print_cast(project, cast, scripts, project.cast_path(tts))
     if render:
         out = project.render(tts, scripts, cast, fmt=args.format, out_dir=args.out,
@@ -278,6 +282,8 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("cast", help="assign voices to characters (editable JSON)")
     _add_book_args(p)
     _add_tts_args(p)
+    p.add_argument("--reset", action="store_true",
+                   help="re-assign every voice from scratch (discards edits to the cast file)")
     p.set_defaults(func=cmd_cast)
 
     p = sub.add_parser("render", help="synthesize the audiobook from the analysis and cast")

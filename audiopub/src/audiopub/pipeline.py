@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import audio
-from .casting import build_cast, load_cast, save_cast
+from .casting import build_cast, load_cast, pick_voices, save_cast
 from .models import NARRATOR, Book, Chapter, Character, Roster, Segment
 from .progress import NullReporter
 from .tts import TTSBackend
@@ -291,14 +291,16 @@ class Project:
     def cast_path_for(self, backend: str) -> Path:
         return self.dir / f"cast.{backend}.json"
 
-    def cast(self, tts: TTSBackend, scripts: dict[int, list[Segment]], narrator_voice: str | None = None) -> dict:
+    def cast(self, tts: TTSBackend, scripts: dict[int, list[Segment]], narrator_voice: str | None = None,
+             reset: bool = False, multilingual: bool = False) -> dict:
         roster = self.load_roster()
         lines = Counter(s.speaker for segs in scripts.values() for s in segs)
         path = self.cast_path(tts)
-        existing = load_cast(path)
+        existing = {} if reset else load_cast(path)
         if narrator_voice and existing.get(NARRATOR, {}).get("voice") != narrator_voice:
             existing[NARRATOR] = {"voice": narrator_voice, "pitch": 0.0, "speed": 1.0}
-        cast = build_cast(existing, roster, lines, tts.voices(self.book.language), narrator_voice)
+        voices = pick_voices(tts.voices(self.book.language), self.book.language, multilingual)
+        cast = build_cast(existing, roster, lines, voices, narrator_voice)
         save_cast(path, cast)
         return cast
 

@@ -12,8 +12,8 @@ book.epub ─▶ chapters & paragraphs ─▶ narration / dialogue split ─▶ 
   quote, so it can never change or skip the book's text.
 - The LLM keeps a running list of characters with aliases ("Lizzy" = "Elizabeth Bennet"), gender
   and age, which drive voice choice: women get female voices, men male ones, children are pitched
-  up, the elderly slowed down. When there are more characters than voices, voices are reused with
-  a pitch shift.
+  up, the elderly slowed down. Voices are in the book's language; when there are more characters
+  than voices, voices are reused with small pitch/speed variations.
 - **Any model, any provider** for the attribution step, and three TTS backends (one fully offline).
 - Everything is cached: interrupt and re-run to resume; edit the cast and re-render only what changed.
 
@@ -85,7 +85,14 @@ audiopub render my-book.epub --tts edge    # synthesize and build the .m4b
 ```
 
 `pitch` is in semitones, `speed` is a multiplier. Your edits are kept on later runs; delete an
-entry to have it re-assigned. `audiopub voices --tts edge --lang it` lists available voices.
+entry to have it re-assigned, or run `audiopub cast --reset` to re-assign every voice (this
+discards your edits).
+
+Voices are taken from the book's language only. Some languages have few voices (Edge has two male
+and two female Italian ones), so characters then share a voice with small pitch/speed variations;
+the main characters get the most distinct ones, and the narrator's voice is used only as a last
+resort. `--multilingual-voices` adds other languages' multilingual voices for more variety, but
+they read the book with a foreign accent. `audiopub voices --tts edge --lang it` lists available voices.
 `characters.json` and `script/chNNN.json` in the same folder show what the LLM decided.
 
 **Project folder.** Results are saved per book in `~/.local/share/audiopub/books/<title>-<id>/`.
@@ -189,7 +196,7 @@ overhead), so a 100k-word novel is roughly 150k input tokens.
 
 | `--tts` | |
 |---|---|
-| `edge` (default) | Microsoft Edge neural voices: free, needs internet, ~400 voices in ~80 languages, plus multilingual voices that are used when a language has few native ones. |
+| `edge` (default) | Microsoft Edge neural voices: free, needs internet, ~400 voices in ~80 languages, plus multilingual voices from other languages (opt-in with `--multilingual-voices`; they have a foreign accent). |
 | `kokoro` | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), runs on your machine. ~50 voices (English, Spanish, French, Italian, Portuguese, Hindi, Japanese, Chinese). |
 | `openai` | OpenAI speech (`--tts-model gpt-4o-mini-tts` by default), or any server with the same API via `--tts-base-url` (e.g. Kokoro-FastAPI). For servers with other voices set `AUDIOPUB_TTS_VOICES="id:female,id2:male,..."`. |
 
