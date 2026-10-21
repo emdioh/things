@@ -14,7 +14,7 @@ book.epub ─▶ chapters & paragraphs ─▶ narration / dialogue split ─▶ 
   and age, which drive voice choice: women get female voices, men male ones, children are pitched
   up, the elderly slowed down. Voices are in the book's language; when there are more characters
   than voices, voices are reused with small pitch/speed variations.
-- **Any model, any provider** for the attribution step, and three TTS backends (one fully offline).
+- **Any model, any provider** for the attribution step, and four TTS backends: free Edge voices, Kokoro (fully offline), OpenAI and OpenRouter (Mistral Voxtral).
 - Everything is cached: interrupt and re-run to resume; edit the cast and re-render only what changed.
 
 ## Install
@@ -26,7 +26,7 @@ Install the `audiopub` command globally (run from this folder):
 
 ```bash
 uv tool install .                     # Anthropic + Edge TTS
-uv tool install '.[openai]'           # + OpenAI-compatible LLMs (OpenAI, Ollama, OpenRouter, Gemini, ...) and OpenAI TTS
+uv tool install '.[openai]'           # + OpenAI-compatible LLMs (OpenAI, Ollama, OpenRouter, Gemini, ...) and OpenAI/OpenRouter TTS
 uv tool install '.[openai,kokoro]'    # + Kokoro offline TTS
 ```
 
