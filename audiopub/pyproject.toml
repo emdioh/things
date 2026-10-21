@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audiopub"
+version = "0.1.0"
+description = "Turn EPUB books into multi-voice audiobooks"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "ebooklib>=0.18",
+    "beautifulsoup4>=4.12",
+    "anthropic>=1.0",
+    "edge-tts>=7.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.40"]
+kokoro = ["kokoro>=0.9", "numpy"]
+dev = ["pytest"]
+
+[project.scripts]
+audiopub = "audiopub.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::bs4.XMLParsedAsHTMLWarning"]
