@@ -13,6 +13,7 @@ from .epub import read_epub
 from .llm import DEFAULT_LLM, PROVIDERS
 from .models import NARRATOR
 from .pipeline import Project, default_root, project_dir
+from .progress import Reporter
 from .tts import BACKENDS, make_tts
 
 
@@ -127,7 +128,8 @@ def cmd_voices(args) -> None:
 def cmd_analyze(args) -> None:
     attributor = _attributor(args)
     book, project, chapters = _open(args.epub, args)
-    scripts = project.analyze(attributor, chapters, force=args.reanalyze, retry_failed=args.retry_failed)
+    scripts = project.analyze(attributor, chapters, force=args.reanalyze, retry_failed=args.retry_failed,
+                               reporter=Reporter(detail=not args.quiet))
     lines = Counter(s.speaker for segs in scripts.values() for s in segs)
     roster = project.load_roster()
     print(f"\n{len(roster.characters)} characters found. Most frequent speakers:")
@@ -242,14 +244,17 @@ def cmd_convert(args) -> None:
     for epub in args.epubs:
         print(f"== {epub}")
         book, project, chapters = _open(epub, args)
-        scripts = project.analyze(attributor, chapters, force=args.reanalyze, retry_failed=args.retry_failed)
+        scripts = project.analyze(attributor, chapters, force=args.reanalyze, retry_failed=args.retry_failed,
+                                  reporter=Reporter(detail=not args.quiet))
         _warn_failed(project, chapters)
         _cast_and_render(args, project, chapters, scripts, render=True)
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="audiopub", description="Turn EPUB books into multi-voice audiobooks.")
-    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("-v", "--verbose", action="count", default=0,
+                        help="-v: debug details from audiopub; -vv: also every HTTP request")
+    parser.add_argument("-q", "--quiet", action="store_true", help="one progress line per chapter only")
     parser.add_argument("--env-file", type=Path,
                         help=f"read API keys from this file (default: ./.env, then {user_env_file()})")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -302,6 +307,10 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(message)s")
+    if args.verbose < 2:
+        # HTTP client libraries log one INFO line per request ("HTTP/1.1 200 OK").
+        for noisy in ("httpx", "httpx2", "httpcore", "httpcore2", "openai", "anthropic"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
     for path in load_env(args.env_file):
         logging.info("loaded settings from %s", path)
     try:

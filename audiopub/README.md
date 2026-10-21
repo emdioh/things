@@ -108,6 +108,24 @@ audiopub analyze my-book.epub --chapters 1-10
 audiopub analyze my-book.epub --chapters 11-20
 ```
 
+**Progress output.** While analyzing, audiopub reports each passage it sends (paragraph range,
+number of quotes, size, model), how long the model took, who speaks in it, new characters
+(`+ new character: …`) and new details about known ones (`~ …: also "…"`), retries with their
+reason (`⚠ … retrying (2/3)`) and passages that fell back to heuristics (`✗ …`), then a summary
+per chapter and for the whole run:
+
+```
+[4/5] I pugnalatori — 21,467 words, 11 passages with dialogue to send (resuming at ¶106)
+  passage 10/11 · ¶106–112 of 115 · 14 quotes · 11,820 chars → deepseek:deepseek-flash
+    ⚠ model returned invalid JSON (…) — retrying (2/3)
+    ✓ 14 quotes labelled in 6.2s
+      speakers: Longo ×5, Mangano ×3, narrator ×1
+      + new character: Cavaliere Longo (male, adult) — a knight
+```
+
+`-q` reduces this to one line per chapter (plus warnings); `-v` adds debug details; `-vv` also
+shows every HTTP request. Options like these go before the command: `audiopub -q analyze …`.
+
 **Status.** See what is done:
 
 ```bash

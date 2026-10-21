@@ -31,6 +31,7 @@ from pathlib import Path
 from . import audio
 from .casting import build_cast, load_cast, save_cast
 from .models import NARRATOR, Book, Chapter, Character, Roster, Segment
+from .progress import NullReporter
 from .tts import TTSBackend
 from .tts.base import Job
 
@@ -182,34 +183,40 @@ class Project:
         return [tuple(c) for c in data.get("failed_chunks", [])] if data else []
 
     def analyze(self, attributor, chapters: list[Chapter], force: bool = False,
-                retry_failed: bool = False) -> dict[int, list[Segment]]:
+                retry_failed: bool = False, reporter=None) -> dict[int, list[Segment]]:
+        reporter = reporter or NullReporter()
+        attributor.reporter = reporter
         if force and len(chapters) == len(self.book.chapters):
             # Re-analyzing the whole book: start the character list from scratch too.
             self.roster_path.unlink(missing_ok=True)
         roster = self.load_roster()
         scripts: dict[int, list[Segment]] = {}
+        cached_scripts = {} if force else {c.index: self._read_script(c) for c in chapters}
+        todo = sum(1 for c in chapters if cached_scripts.get(c.index) is None
+                   or (retry_failed and cached_scripts[c.index].get("failed_chunks")))
+        reporter.analysis_start(self.book.title, attributor.name, todo, len(chapters) - todo)
         for chapter in chapters:
+            label = f"[{chapter.index + 1}/{len(self.book.chapters)}] {chapter.title}"
             source = _hash(chapter.paragraphs)
             checkpoint = Checkpoint(self._script_path(chapter).with_suffix(".partial.json"),
                                     source, roster, self.save_roster)
-            cached = None if force else self._read_script(chapter)
+            cached = cached_scripts.get(chapter.index)
             if cached is not None:
                 retry = [tuple(c) for c in cached.get("failed_chunks", [])]
                 if not (retry_failed and retry and "labels" in cached):
                     scripts[chapter.index] = [Segment(**s) for s in cached["segments"]]
+                    reporter.chapter_cached(label, sum(s.speaker != NARRATOR for s in scripts[chapter.index]),
+                                            len(retry))
                     continue
                 # Re-run only the passages that fell back to heuristics last time.
                 checkpoint.labels = _labels_from_json(cached["labels"])
                 checkpoint.done = len(chapter.paragraphs)
                 checkpoint.failed = retry
                 checkpoint.retry = retry
-                note = f" (retrying {len(retry)} failed passage{'s' if len(retry) > 1 else ''})"
-            else:
-                if force:
-                    checkpoint.clear()
-                    checkpoint = Checkpoint(checkpoint.path, source, roster, self.save_roster)
-                note = f" (resuming at paragraph {checkpoint.done + 1})" if checkpoint.done else ""
-            _status(f"Analyzing [{chapter.index + 1}/{len(self.book.chapters)}] {chapter.title}{note}")
+            elif force:
+                checkpoint.clear()
+                checkpoint = Checkpoint(checkpoint.path, source, roster, self.save_roster)
+            reporter.label = label
             segments = attributor.attribute_chapter(chapter, roster, checkpoint=checkpoint)
             scripts[chapter.index] = segments
             write_json(self._script_path(chapter), {
@@ -222,7 +229,9 @@ class Project:
             })
             self.save_roster(roster)
             checkpoint.clear()
-        _status("")
+            reporter.chapter_done(label, sum(s.speaker != NARRATOR for s in segments),
+                                  len({s.speaker for s in segments} - {NARRATOR}), len(checkpoint.failed))
+        reporter.analysis_done(len(roster.characters))
         return scripts
 
     def rename_speaker(self, old: str, new: str) -> int:
