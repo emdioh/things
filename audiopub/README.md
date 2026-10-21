@@ -37,10 +37,24 @@ uv run audiopub convert my-book.epub
 uv run --extra kokoro audiopub convert my-book.epub --tts kokoro
 ```
 
+## API keys
+
+Put your keys in a `.env` file (see [`.env.example`](.env.example)):
+
+```bash
+mkdir -p ~/.config/audiopub
+cp .env.example ~/.config/audiopub/.env    # works from any folder
+$EDITOR ~/.config/audiopub/.env
+```
+
+audiopub reads, in order: the file given with `--env-file`, `./.env` in the current folder, then
+`~/.config/audiopub/.env`. If a key is defined in several, the first wins, and variables exported in
+your shell override all files. `--llm-api-key` / `--tts-api-key` override everything. `audiopub -v ...`
+logs which files were loaded.
+
 ## Quick start
 
 ```bash
-export ANTHROPIC_API_KEY=...
 audiopub convert my-book.epub              # -> ./My_Book.m4b
 audiopub convert ~/books/*.epub -o ~/audiobooks
 ```

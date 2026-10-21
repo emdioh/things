@@ -5,3 +5,4 @@ audiopub-work/
 *.m4b
 .venv/
 dist/
+.env

@@ -8,6 +8,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from .env import load_env, user_env_file
 from .epub import read_epub
 from .llm import DEFAULT_LLM, PROVIDERS
 from .models import NARRATOR
@@ -182,6 +183,8 @@ def cmd_convert(args) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="audiopub", description="Turn EPUB books into multi-voice audiobooks.")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--env-file", type=Path,
+                        help=f"read API keys from this file (default: ./.env, then {user_env_file()})")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("convert", help="analyze + cast + render, for one or more books")
@@ -218,6 +221,8 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(message)s")
+    for path in load_env(args.env_file):
+        logging.info("loaded settings from %s", path)
     try:
         args.func(args)
     except KeyboardInterrupt:
