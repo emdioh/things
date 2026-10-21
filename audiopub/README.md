@@ -66,12 +66,15 @@ audiopub chapters my-book.epub             # list chapters with word counts
 audiopub convert my-book.epub --chapters 1-2
 ```
 
-## Step by step (to review the casting)
+## Working in steps, checkpoints and resuming
+
+`convert` runs three steps in one go: `analyze`, `cast` and `render`. Run them separately to review
+the casting in between:
 
 ```bash
 audiopub analyze my-book.epub              # find characters and who says what
-audiopub cast my-book.epub --tts edge      # pick voices; prints the cast table
-$EDITOR audiopub-work/my-book/cast.edge.json
+audiopub cast my-book.epub --tts edge      # pick voices; prints the cast table and the file path
+$EDITOR <project folder>/cast.edge.json    # path printed by 'audiopub cast' / 'audiopub status'
 audiopub render my-book.epub --tts edge    # synthesize and build the .m4b
 ```
 
@@ -84,6 +87,60 @@ audiopub render my-book.epub --tts edge    # synthesize and build the .m4b
 `pitch` is in semitones, `speed` is a multiplier. Your edits are kept on later runs; delete an
 entry to have it re-assigned. `audiopub voices --tts edge --lang it` lists available voices.
 `characters.json` and `script/chNNN.json` in the same folder show what the LLM decided.
+
+**Project folder.** Results are saved per book in `~/.local/share/audiopub/books/<title>-<id>/`.
+Change the root with `$AUDIOPUB_HOME`, or the folder for one command with `--workdir`. The folder
+is keyed by the book's metadata, so commands find it from any directory and after you rename the
+`.epub`. Speaker detection is done once per chapter and reused by later commands: the LLM is not
+called again unless you pass `--reanalyze`.
+
+**Checkpoints.** Progress is saved as it happens:
+
+- analysis is saved after every LLM request, even mid-chapter;
+- each synthesized line is saved;
+- each encoded chapter is saved.
+
+Interrupt with Ctrl-C at any time and re-run the same command to resume. To work through a long
+book in batches, limit any command with `--chapters` (`audiopub chapters` lists the numbers):
+
+```bash
+audiopub analyze my-book.epub --chapters 1-10
+audiopub analyze my-book.epub --chapters 11-20
+```
+
+**Status.** See what is done:
+
+```bash
+audiopub status my-book.epub               # per chapter: analysis, audio, encoded
+audiopub status my-book.epub --speakers    # also speakers, line counts, gender, aliases
+audiopub status my-book.epub --tts openai  # audio progress for another backend
+```
+
+For each chapter, `status` shows whether it is analyzed (and by which model), partially analyzed,
+how many lines have audio, and whether it is encoded. `--tts` selects which backend's audio
+progress to show.
+
+**Fixing attribution** without re-running the model:
+
+```bash
+audiopub speaker my-book.epub "Lizzy" "Elizabeth Bennet"   # rename or merge across the book
+audiopub speaker my-book.epub "The letter" NARRATOR         # quoted text that isn't speech
+audiopub render my-book.epub --tts edge                     # re-synthesizes only affected lines
+```
+
+The `script/chNNN.json` files can also be edited by hand.
+
+**Files in the project folder:**
+
+| File | Contents |
+|---|---|
+| `book.json` | the book this project is (title, author, language, EPUB path) |
+| `characters.json` | the character roster: aliases, gender, age, description |
+| `script/chNNN.json` | who says what, per chapter (hand-editable) |
+| `script/chNNN.partial.json` | checkpoint of a chapter being analyzed |
+| `cast.<backend>.json` | voice per speaker for one TTS backend (hand-editable) |
+| `audio/` | one file per synthesized line, keyed by content |
+| `chapters/` | encoded chapters, keyed by content |
 
 ## Choosing the LLM (`--llm provider:model`)
 

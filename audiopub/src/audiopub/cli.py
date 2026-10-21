@@ -174,7 +174,10 @@ def cmd_status(args) -> None:
               f"{'yes' if r.encoded else '-'}")
     done = sum(r.analysis == "done" for r in rows)
     print(f"\n{done}/{len(rows)} chapters analyzed", end="")
-    if not project.cast_path_for(tts_name).exists():
+    cast_file = project.cast_path_for(tts_name)
+    if cast_file.exists():
+        print(f"\ncast ({tts_name}): {cast_file}", end="")
+    else:
         print(f"; no cast for '{tts_name}' yet (run 'audiopub cast')", end="")
     print()
     if args.speakers:
