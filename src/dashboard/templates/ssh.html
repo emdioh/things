@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}SSH setup{% endblock %}
+{% block content %}
+<div class="card">
+  <strong>Dashboard public key</strong>
+  <pre>{{ pubkey }}</pre>
+</div>
+
+{% set pct = cfg.hosts.values() | selectattr("ctid") | list %}
+{% if pct %}
+<div class="card">
+  <strong>All containers at once</strong>
+  <div class="muted">Paste into the Proxmox host shell. Safe to run again.</div>
+  <pre>{% for h in pct %}{{ commands[h.name] }}
+{% endfor %}</pre>
+</div>
+{% endif %}
+
+{% for h in cfg.hosts.values() %}
+<div class="card">
+  <div class="row">
+    <div class="grow">
+      <strong>{{ h.name }}</strong>
+      <span class="muted">{{ h.user }}@{{ h.address }}:{{ h.port }}{% if h.ctid %} · CT {{ h.ctid }}{% endif %}</span>
+    </div>
+    <button class="secondary" hx-post="/hosts/{{ h.name }}/check" hx-target="#check-{{ loop.index }}">Test connection</button>
+  </div>
+  <div class="muted">
+    {% if h.ctid %}Run on the Proxmox host:{% else %}Run inside {{ h.name }} as root:{% endif %}
+  </div>
+  <pre>{{ commands[h.name] }}</pre>
+  <div id="check-{{ loop.index }}"></div>
+</div>
+{% endfor %}
+{% endblock %}

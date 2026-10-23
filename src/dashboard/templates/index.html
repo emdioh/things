@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+{% for s in cfg.services.values() %}
+<div class="card">
+  <div class="row">
+    <div class="grow">
+      <strong>{{ s.name }}</strong>
+      <span class="muted">on {{ s.host }} · {{ s.repo_dir }}</span>
+      {% if s.description %}<div class="muted">{{ s.description }}</div>{% endif %}
+      {% set j = last.get(s.name) %}
+      {% if j %}
+      <div class="muted">
+        last: <a href="/jobs/{{ j.id }}"><span class="status {{ j.status }}">{{ j.status }}</span></a>
+        · {{ j.ref }} · {{ j.started | ts }}
+      </div>
+      {% endif %}
+    </div>
+    <form class="row" hx-post="/services/{{ s.name }}/deploy" hx-target="#err-{{ loop.index }}"
+          hx-confirm="Redeploy {{ s.name }}?">
+      <input type="text" name="ref" placeholder="{{ s.default_ref or 'default branch' }}"
+             title="Branch, tag or commit hash. Leave empty for the default.">
+      <button>Redeploy</button>
+    </form>
+  </div>
+  <div id="err-{{ loop.index }}"></div>
+</div>
+{% else %}
+<div class="card">No services configured. Add some to the config file and restart.</div>
+{% endfor %}
+{% endblock %}

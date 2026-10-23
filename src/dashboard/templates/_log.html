@@ -1,0 +1,6 @@
+{# Keeps polling while the job runs; the final render has no trigger, so polling stops. #}
+<div id="log"
+     {% if job.status == "running" %}hx-get="/jobs/{{ job.id }}/log" hx-trigger="every 1s" hx-swap="outerHTML"{% endif %}>
+  <div class="status {{ job.status }}">{{ job.status }}{% if job.finished %} · {{ (job.finished - job.started) | round(1) }}s{% endif %}</div>
+  <pre>{{ job.lines | join("\n") }}</pre>
+</div>

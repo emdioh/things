@@ -1,0 +1,32 @@
+# Copy to /etc/dashboard/config.yaml (or point DASHBOARD_CONFIG at it).
+
+# SSH key, known_hosts and deploy logs live here.
+data_dir: /var/lib/dashboard
+
+hosts:
+  media:
+    address: 10.0.0.21
+    ctid: 121          # Proxmox container id: lets the SSH setup page give you a `pct exec` command
+    # user: root       # default
+    # port: 22         # default
+  apps:
+    address: 10.0.0.22
+    ctid: 122
+
+services:
+  jellyfin:
+    host: media
+    repo_dir: /opt/jellyfin        # a git clone on the host; compose file lives here
+    description: Media server
+    # No default_ref: deploys the remote's default branch unless you type a ref.
+    # No steps: uses `docker compose pull --ignore-buildable` + `docker compose up -d --build --remove-orphans`.
+
+  myapp:
+    host: apps
+    repo_dir: /srv/myapp
+    default_ref: production        # used when the ref box is left empty
+    steps:                         # run in repo_dir after checkout; any failure stops the deploy
+      - ./scripts/pre-deploy.sh
+      - docker compose down
+      - docker compose up -d --build
+    # Steps also see $DEPLOY_REF and $DEPLOY_SHA.

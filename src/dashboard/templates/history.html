@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}History{% endblock %}
+{% block content %}
+<div class="card">
+  <table>
+    <tr><th>Started</th><th>Service</th><th>Ref</th><th>Status</th></tr>
+    {% for j in jobs %}
+    <tr>
+      <td><a href="/jobs/{{ j.id }}">{{ j.started | ts }}</a></td>
+      <td>{{ j.service }}</td>
+      <td>{{ j.ref }}</td>
+      <td class="status {{ j.status }}">{{ j.status }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">No deploys yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

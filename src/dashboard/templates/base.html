@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Dashboard{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
+  <style>
+    :root { --bg:#f6f7f9; --fg:#1d2024; --muted:#68707a; --card:#fff; --line:#dde1e6;
+            --accent:#2f6fde; --ok:#1f8a4c; --bad:#c9372c; --run:#b7791f; --code:#0f1419; --codefg:#d8dee4; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#14171b; --fg:#e4e7eb; --muted:#9aa3ad; --card:#1c2026; --line:#2c323a; --accent:#5b8ff0; }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+    header { display:flex; gap:20px; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); background:var(--card); }
+    header strong { margin-right:auto; }
+    a { color:var(--accent); text-decoration:none; }
+    main { max-width:1000px; margin:0 auto; padding:16px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:12px; }
+    .row { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+    .grow { flex:1; min-width:200px; }
+    .muted { color:var(--muted); font-size:13px; }
+    input[type=text] { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); width:220px; }
+    button { font:inherit; padding:6px 14px; border:0; border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; }
+    button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+    pre { background:var(--code); color:var(--codefg); padding:12px; border-radius:6px; overflow-x:auto; font-size:13px; margin:8px 0 0; white-space:pre-wrap; word-break:break-all; }
+    .status { font-weight:600; }
+    .status.ok { color:var(--ok); } .status.failed { color:var(--bad); } .status.running { color:var(--run); }
+    .error { color:var(--bad); }
+    table { width:100%; border-collapse:collapse; } td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Dashboard</strong>
+    <a href="/">Services</a>
+    <a href="/history">History</a>
+    <a href="/ssh">SSH setup</a>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>
