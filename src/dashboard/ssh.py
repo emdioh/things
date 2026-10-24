@@ -45,7 +45,7 @@ def authorize_snippet(pubkey: str, user: str) -> str:
     return (
         f'h=$(getent passwd {u} | cut -d: -f6) && '
         f'install -d -m 700 -o {u} "$h/.ssh" && '
-        f'f="$h/.ssh/authorized_keys" && touch "$f" && chmod 600 "$f" && chown {u}: "$f" && '
+        f'f="$h/.ssh/authorized_keys" && touch "$f" && chmod 600 "$f" && chown {u} "$f" && '
         f'(grep -qxF {k} "$f" || echo {k} >> "$f")'
     )
 

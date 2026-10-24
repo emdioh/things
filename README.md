@@ -15,23 +15,30 @@ The dashboard reaches hosts over SSH with its own key. There is no login:
 put it behind something that authenticates (e.g. a Cloudflare Tunnel with
 Cloudflare Access).
 
-## Install (in a Debian/Ubuntu LXC)
+## Install (in an Alpine LXC)
 
 ```sh
-apt install -y git openssh-client curl
+apk add python3 git openssh-client openssh-keygen curl
 curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone -b dashboard https://github.com/emdioh/things /opt/dashboard
-cd /opt/dashboard && ~/.local/bin/uv sync --frozen
+cd /opt/dashboard && ~/.local/bin/uv sync --frozen --no-dev
 
 mkdir -p /etc/dashboard
 cp config.example.yaml /etc/dashboard/config.yaml   # then edit it
 
-cp deploy/dashboard.service /etc/systemd/system/
-systemctl daemon-reload && systemctl enable --now dashboard
+cp deploy/dashboard.openrc /etc/init.d/dashboard
+rc-update add dashboard && rc-service dashboard start
 ```
 
 The UI listens on port 8080; point the Cloudflare tunnel at
-`http://<lxc-ip>:8080`.
+`http://<lxc-ip>:8080`. Logs go to `/var/log/dashboard.log`.
+
+To update the dashboard later:
+`cd /opt/dashboard && git pull && ~/.local/bin/uv sync --frozen --no-dev && rc-service dashboard restart`.
+
+Only the dashboard needs these packages. The hosts it deploys to need `bash`,
+`git`, Docker and an SSH server (on Alpine hosts: `apk add bash git openssh`,
+then `rc-update add sshd && rc-service sshd start`).
 
 ## Configuration
 
@@ -70,8 +77,8 @@ when you run `uv run dashboard pubkey`. To install it on the hosts:
   ```
 
 The commands are idempotent, so re-running them is harmless. Each target
-needs an SSH server (`apt install openssh-server` if missing), plus `git`
-and Docker. The first connection pins the host key in `data_dir/known_hosts`;
+needs an SSH server, `bash`, `git` and Docker (see the install notes above).
+The first connection pins the host key in `data_dir/known_hosts`;
 if you rebuild a container, delete its line there.
 
 Fetching from private git remotes is the target host's business: give that
