@@ -46,7 +46,7 @@ token as an argument, or paste the whole `cloudflared service install …`
 command Cloudflare shows. Re-run it to change the token.
 
 In the tunnel's settings, add a public hostname pointing to
-`http://localhost:8080`, and protect that hostname with a Cloudflare Access
+`http://127.0.0.1:8080` (not `localhost`, which can resolve to IPv6 `::1`), and protect that hostname with a Cloudflare Access
 application: the dashboard has no login of its own.
 
 The hosts the dashboard deploys to need `bash`,

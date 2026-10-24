@@ -84,7 +84,7 @@ cloudflared is running (logs: /var/log/cloudflared.log).
 
 In the Cloudflare dashboard (Zero Trust > Networks > Tunnels > your tunnel),
 add a public hostname with service type HTTP and URL:
-  localhost:8080
+  127.0.0.1:8080   (not "localhost": it can resolve to IPv6 ::1)
 and protect that hostname with an Access application, since the dashboard
 itself has no login.
 EOF
