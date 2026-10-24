@@ -1,11 +1,12 @@
 #!/sbin/openrc-run
-# Install: cp deploy/dashboard.openrc /etc/init.d/dashboard && rc-update add dashboard
+# Installed by scripts/install.sh. Set DASHBOARD_HOST / DASHBOARD_PORT in
+# /etc/conf.d/dashboard to change where it listens.
 
 name="dashboard"
 description="Deploy dashboard"
 supervisor="supervise-daemon"
 command="/opt/dashboard/.venv/bin/dashboard"
-command_args="serve --host 0.0.0.0 --port 8080"
+command_args="serve --host ${DASHBOARD_HOST:-0.0.0.0} --port ${DASHBOARD_PORT:-8080}"
 directory="/opt/dashboard"
 output_log="/var/log/dashboard.log"
 error_log="/var/log/dashboard.log"

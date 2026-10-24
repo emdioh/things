@@ -17,26 +17,39 @@ Cloudflare Access).
 
 ## Install (in an Alpine LXC)
 
+As root:
+
 ```sh
-apk add python3 git openssh-client openssh-keygen curl
-curl -LsSf https://astral.sh/uv/install.sh | sh
-git clone -b dashboard https://github.com/emdioh/things /opt/dashboard
-cd /opt/dashboard && ~/.local/bin/uv sync --frozen --no-dev
-
-mkdir -p /etc/dashboard
-cp config.example.yaml /etc/dashboard/config.yaml   # then edit it
-
-cp deploy/dashboard.openrc /etc/init.d/dashboard
-rc-update add dashboard && rc-service dashboard start
+wget -qO- https://raw.githubusercontent.com/emdioh/things/dashboard/scripts/install.sh | sh
 ```
 
-The UI listens on port 8080; point the Cloudflare tunnel at
-`http://<lxc-ip>:8080`. Logs go to `/var/log/dashboard.log`.
+[`scripts/install.sh`](scripts/install.sh) installs the packages and uv,
+clones this branch to `/opt/dashboard`, creates `/etc/dashboard/config.yaml`
+from the example if it doesn't exist, and starts the `dashboard` OpenRC
+service on port 8080 (logs: `/var/log/dashboard.log`). Edit the config, then
+`rc-service dashboard restart`. Re-run the same command to update.
 
-To update the dashboard later:
-`cd /opt/dashboard && git pull && ~/.local/bin/uv sync --frozen --no-dev && rc-service dashboard restart`.
+### Cloudflare Tunnel
 
-Only the dashboard needs these packages. The hosts it deploys to need `bash`,
+Create a tunnel in the Cloudflare dashboard (Zero Trust > Networks > Tunnels),
+copy its token, then on the same LXC:
+
+```sh
+sh /opt/dashboard/scripts/install-cloudflared.sh            # prompts for the token
+```
+
+[`scripts/install-cloudflared.sh`](scripts/install-cloudflared.sh) installs
+`cloudflared` as an OpenRC service with the token stored in
+`/etc/cloudflared/token`, and switches the dashboard to listen on
+`127.0.0.1` only, so the tunnel is the only way in. You can also pass the
+token as an argument, or paste the whole `cloudflared service install …`
+command Cloudflare shows. Re-run it to change the token.
+
+In the tunnel's settings, add a public hostname pointing to
+`http://localhost:8080`, and protect that hostname with a Cloudflare Access
+application: the dashboard has no login of its own.
+
+The hosts the dashboard deploys to need `bash`,
 `git`, Docker and an SSH server (on Alpine hosts: `apk add bash git openssh`,
 then `rc-update add sshd && rc-service sshd start`).
 
